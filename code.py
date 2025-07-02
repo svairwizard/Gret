@@ -3,29 +3,32 @@ import re
 import shutil
 
 def should_skip_path(path):
-    """Проверяет, нужно ли пропустить папку из-за наличия 'microsoft' в пути"""
+    """Проверяет, нужно ли пропустить папку из-за наличия 'microsoft' или 'gtest' в пути"""
     path_parts = path.lower().split(os.sep)
-    return any('microsoft' in part for part in path_parts)
+    skip_keywords = ['microsoft', 'gtest']
+    return any(keyword in part for part in path_parts for keyword in skip_keywords)
 
 def delete_unnecessary_folders(root_dir):
-    folders_to_delete = ['.vs', 'build']
+    # Папки для удаления (включая скрытую .vs)
+    folders_to_delete = ['.vs', 'build', 'bin', 'x64', 'Debug', 'Release']
+    
     for root, dirs, _ in os.walk(root_dir):
         # Удаляем папки из списка dirs, чтобы os.walk их не обрабатывал
         dirs[:] = [d for d in dirs if not should_skip_path(os.path.join(root, d))]
         
         for dirname in dirs:
-            if dirname.lower() in folders_to_delete:
+            if dirname.lower() in (f.lower() for f in folders_to_delete):
                 dirpath = os.path.join(root, dirname)
                 try:
                     if not should_skip_path(dirpath):
                         shutil.rmtree(dirpath)
-                        print(f"🗑️ Удалена папка: {dirpath}")
+                        print(f"🗑 Удалена папка: {dirpath}")
                 except Exception as e:
                     print(f"⚠️ Ошибка при удалении {dirpath}: {e}")
 
 def replace_in_filename_and_content(root_dir, old_word, new_word):
     if should_skip_path(root_dir):
-        print(f"⏩ Пропускаем папку (содержит Microsoft): {root_dir}")
+        print(f"⏩ Пропускаем папку (содержит Microsoft или GTest): {root_dir}")
         return
 
     root_dir_name = os.path.basename(root_dir)
@@ -42,7 +45,7 @@ def replace_in_filename_and_content(root_dir, old_word, new_word):
             filepath = os.path.join(root, filename)
             
             if should_skip_path(filepath):
-                print(f"⏩ Пропускаем файл (содержит Microsoft): {filepath}")
+                print(f"⏩ Пропускаем файл (содержит Microsoft или GTest): {filepath}")
                 continue
                 
             new_filename = re.sub(
@@ -87,16 +90,16 @@ def replace_in_filename_and_content(root_dir, old_word, new_word):
                 os.rename(dirpath, new_dirpath)
 
 def main():
-    print("=== Gret v_1.2 dev. by svairwizard ===")
+    print("=== Gret v_1.3 dev. by svairwizard ===")
+    print("=== Удаляет bin, x64, .vs, build, Debug, Release ===")
     folder_path = input("Путь к папке проекта: ").strip('"').strip()
     old_word = input("Какое слово заменяем?: ").strip()
     new_word = input("На какое слово меняем?: ").strip()
-
     if not os.path.exists(folder_path):
         print("Ошибка: папка не существует!")
         return
     
-    print("\nУдаление ненужных папок (.vs, build)...")
+    print("\nУдаление ненужных папок (.vs, build, bin, x64, Debug, Release)...")
     delete_unnecessary_folders(folder_path)
     
     print("\nНачинаем замену...")
