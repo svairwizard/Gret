@@ -1,110 +1,125 @@
 import os
 import re
 import shutil
+import sys
 
-def should_skip_path(path):
-    """Проверяет, нужно ли пропустить папку из-за наличия 'microsoft' или 'gtest' в пути"""
-    path_parts = path.lower().split(os.sep)
-    skip_keywords = ['microsoft', 'gtest']
-    return any(keyword in part for part in path_parts for keyword in skip_keywords)
+# Папки, которые нужно удалять (если они не внутри "неприкосновенных" папок)
+FOLDERS_TO_DELETE = {'.vs', 'build', 'bin', 'x64'}
 
-def delete_unnecessary_folders(root_dir):
-    # Папки для удаления (включая скрытую .vs)
-    folders_to_delete = ['.vs', 'build', 'bin', 'x64', 'Debug', 'Release']
+# "Неприкосновенные" папки, которые нельзя изменять
+PROTECTED_FOLDERS = {'packages'}
+
+# Расширения файлов, в которых нужно производить замену
+REPLACE_IN_EXTENSIONS = {'.sln', '.hpp', '.cpp', '.h', '.c', '.vcxproj', '.txt', '.md'}
+
+def should_process_path(path):
+    """Проверяет, можно ли обрабатывать путь (не находится ли он в защищенной папке)"""
+    parts = os.path.normpath(path).split(os.sep)
+    return not any(protected in parts for protected in PROTECTED_FOLDERS)
+
+def should_delete_folder(folder_name):
+    """Проверяет, нужно ли удалять папку по её имени"""
+    return folder_name.lower() in {f.lower() for f in FOLDERS_TO_DELETE}
+
+def process_file(file_path, word1, word2):
+    """Обрабатывает файл: заменяет word1 на word2 в его содержимом"""
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        
+        # Используем регулярное выражение для замены без учета регистра
+        pattern = re.compile(re.escape(word1), re.IGNORECASE)
+        new_content = pattern.sub(word2, content)
+        
+        if new_content != content:
+            with open(file_path, 'w', encoding='utf-8', errors='ignore') as f:
+                f.write(new_content)
+            print(f"Изменено содержимое файла: {file_path}")
+            return True
+    except Exception as e:
+        print(f"Ошибка при обработке файла {file_path}: {e}")
+    return False
+
+def rename_path(old_path, word1, word2):
+    """Переименовывает путь (файл или папку), заменяя word1 на word2 в названии"""
+    dirname, basename = os.path.split(old_path)
     
-    for root, dirs, _ in os.walk(root_dir):
-        # Удаляем папки из списка dirs, чтобы os.walk их не обрабатывал
-        dirs[:] = [d for d in dirs if not should_skip_path(os.path.join(root, d))]
-        
-        for dirname in dirs:
-            if dirname.lower() in (f.lower() for f in folders_to_delete):
-                dirpath = os.path.join(root, dirname)
-                try:
-                    if not should_skip_path(dirpath):
-                        shutil.rmtree(dirpath)
-                        print(f"🗑 Удалена папка: {dirpath}")
-                except Exception as e:
-                    print(f"⚠️ Ошибка при удалении {dirpath}: {e}")
+    # Заменяем word1 на word2 в имени файла/папки без учета регистра
+    pattern = re.compile(re.escape(word1), re.IGNORECASE)
+    new_basename = pattern.sub(word2, basename)
+    
+    if new_basename != basename:
+        new_path = os.path.join(dirname, new_basename)
+        try:
+            os.rename(old_path, new_path)
+            print(f"Переименовано: {old_path} -> {new_path}")
+            return new_path
+        except Exception as e:
+            print(f"Ошибка при переименовании {old_path}: {e}")
+    return old_path
 
-def replace_in_filename_and_content(root_dir, old_word, new_word):
-    if should_skip_path(root_dir):
-        print(f"⏩ Пропускаем папку (содержит Microsoft или GTest): {root_dir}")
-        return
-
-    root_dir_name = os.path.basename(root_dir)
-    if old_word.lower() in root_dir_name.lower():
-        new_root_dir = root_dir.replace(old_word, new_word)
-        os.rename(root_dir, new_root_dir)
-        root_dir = new_root_dir
-
+def process_directory(root_dir, word1, word2):
+    """Рекурсивно обрабатывает директорию, выполняя все необходимые замены"""
+    # Сначала обрабатываем файлы и подпапки
     for root, dirs, files in os.walk(root_dir, topdown=False):
-        # Фильтруем папки, которые нужно пропустить
-        dirs[:] = [d for d in dirs if not should_skip_path(os.path.join(root, d))]
+        # Проверяем, нужно ли обрабатывать эту папку
+        if not should_process_path(root):
+            continue
         
-        for filename in files:
-            filepath = os.path.join(root, filename)
-            
-            if should_skip_path(filepath):
-                print(f"⏩ Пропускаем файл (содержит Microsoft или GTest): {filepath}")
-                continue
-                
-            new_filename = re.sub(
-                re.compile(re.escape(old_word), re.IGNORECASE), 
-                new_word, 
-                filename
-            )
-            if new_filename != filename:
-                new_filepath = os.path.join(root, new_filename)
-                os.rename(filepath, new_filepath)
-                filepath = new_filepath
-            
-            try:
-                with open(filepath, 'rb') as file:
-                    content = file.read().decode('utf-8', errors='ignore')
-                
-                new_content = re.sub(
-                    re.compile(re.escape(old_word), re.IGNORECASE), 
-                    new_word, 
-                    content
-                )
-                
-                if new_content != content:
-                    with open(filepath, 'wb') as file:
-                        file.write(new_content.encode('utf-8'))
-            except Exception as e:
-                print(f"⚠️ Ошибка при обработке {filepath}: {e}")
+        # Обрабатываем файлы
+        for file in files:
+            file_path = os.path.join(root, file)
+            if should_process_path(file_path):
+                # Проверяем расширение файла
+                ext = os.path.splitext(file)[1].lower()
+                if ext in REPLACE_IN_EXTENSIONS:
+                    process_file(file_path, word1, word2)
+                # Переименовываем файл, если нужно
+                rename_path(file_path, word1, word2)
         
-        for dirname in dirs:
-            dirpath = os.path.join(root, dirname)
+        # Обрабатываем подпапки
+        for dir_name in list(dirs):  # Используем list() для копирования, так как мы модифицируем dirs
+            dir_path = os.path.join(root, dir_name)
             
-            if should_skip_path(dirpath):
-                continue
-                
-            new_dirname = re.sub(
-                re.compile(re.escape(old_word), re.IGNORECASE), 
-                new_word, 
-                dirname
-            )
-            if new_dirname != dirname:
-                new_dirpath = os.path.join(root, new_dirname)
-                os.rename(dirpath, new_dirpath)
+            # Проверяем, нужно ли удалять эту папку
+            if should_delete_folder(dir_name) and should_process_path(dir_path):
+                try:
+                    shutil.rmtree(dir_path)
+                    print(f"Удалена папка: {dir_path}")
+                    dirs.remove(dir_name)  # Удаляем из списка для обработки, чтобы os.walk не пытался войти
+                except Exception as e:
+                    print(f"Ошибка при удалении папки {dir_path}: {e}")
+            else:
+                # Переименовываем папку, если нужно
+                new_path = rename_path(dir_path, word1, word2)
+                if new_path != dir_path:
+                    # Обновляем список dirs, если папка была переименована
+                    idx = dirs.index(dir_name)
+                    dirs[idx] = os.path.basename(new_path)
+    
+    # Переименовываем корневую папку, если нужно
+    if should_process_path(root_dir):
+        rename_path(root_dir, word1, word2)
 
 def main():
-    print("=== Gret v_1.3 dev. by svairwizard ===")
-    print("=== Удаляет bin, x64, .vs, build, Debug, Release ===")
-    folder_path = input("Путь к папке проекта: ").strip('"').strip()
-    old_word = input("Какое слово заменяем?: ").strip()
-    new_word = input("На какое слово меняем?: ").strip()
-    if not os.path.exists(folder_path):
-        print("Ошибка: папка не существует!")
-        return
+    if len(sys.argv) != 4:
+        print("Использование: python code.py <путь_до_папки> <слово1> <слово2>")
+        sys.exit(1)
     
-    print("\nУдаление ненужных папок (.vs, build, bin, x64, Debug, Release)...")
-    delete_unnecessary_folders(folder_path)
+    root_dir = sys.argv[1]
+    word1 = sys.argv[2]
+    word2 = sys.argv[3]
     
-    print("\nНачинаем замену...")
-    replace_in_filename_and_content(folder_path, old_word, new_word)
-    print("\nГотово! Все файлы и папки обновлены, ненужные папки удалены.")
+    if not os.path.isdir(root_dir):
+        print(f"Ошибка: {root_dir} не является папкой или не существует")
+        sys.exit(1)
+    
+    print(f"Начало обработки папки: {root_dir}")
+    print(f"Замена '{word1}' на '{word2}'")
+    
+    process_directory(root_dir, word1, word2)
+    
+    print("Обработка завершена")
 
 if __name__ == "__main__":
     main()
